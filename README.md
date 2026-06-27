@@ -10,9 +10,10 @@ WiFi & BLE wardriving firmware for ESP32. The device performs the radio scanning
 |---|---|---|---|
 | **Waveshare ESP32-S3-Touch-LCD-4B** | ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB PSRAM) | WiFi 2.4 GHz + BLE 5 | 4" 480×480 RGB touch (GT911) |
 | **Waveshare ESP32-C5-WIFI6-KIT** | ESP32-C5-WROOM-1 N16R4 (16 MB flash, 4 MB PSRAM, RISC-V) | Dual-band WiFi 6 (2.4 / 5 GHz) + BLE 5 | none (headless) |
+| **Waveshare ESP32-C5-Zero / Zero-M** | ESP32-C5-HF4 (4 MB flash, no PSRAM, RISC-V) | Dual-band WiFi 6 (2.4 / 5 GHz) + BLE 5 | none (headless) |
 | **Seeed XIAO ESP32-C5** | ESP32-C5 (8 MB flash, 8 MB PSRAM, RISC-V) | Dual-band WiFi 6 (2.4 / 5 GHz) + BLE 5 | none (headless) |
 
-All boards run the same firmware behavior; the C5 builds skip display code (`HUGINN_HAS_DISPLAY=0`). The two C5 boards share the same ESP32-C5 chip but differ in flash size and toolchain — see [Flashing the firmware](#flashing-the-firmware).
+All boards run the same firmware behavior; the C5 builds skip display code (`HUGINN_HAS_DISPLAY=0`). The C5 boards share the same ESP32-C5 chip family but differ in flash size, PSRAM availability, LED GPIO, and build toolchain — see [Flashing the firmware](#flashing-the-firmware).
 
 ## Features
 
@@ -24,7 +25,7 @@ All boards run the same firmware behavior; the C5 builds skip display code (`HUG
 | **AirTag Detection** | Identify Apple AirTags via BLE manufacturer data |
 | **BLE Spam Detection** | Detect BLE advertising spam attacks |
 | **Skimmer Detection** | Identify potential skimmer devices (HC-05/HC-06 BLE modules) |
-| **Proximity Alert LED** | Optional — onboard RGB LED blinks faster the closer a flagged device gets (RSSI-driven). Colors identify the alert: skimmer = red⇄white, Flipper Zero = blue⇄white. Enabled on C5 builds |
+| **Proximity Alert LED** | Optional — onboard RGB LED blinks faster the closer a flagged device gets (RSSI-driven). Colors identify the alert: skimmer = red⇄white, Flipper Zero = blue⇄white. Enabled on C5 builds with an onboard WS2812 RGB LED |
 | **Mode Button** | Optional — long-press the onboard BOOT button to toggle wardrive ⇄ skimmer-only scanning. LED confirms: 3 purple blinks = skimmer, 3 green = wardrive. C5 builds boot into wardrive |
 | **Touch Display** | Live status, touch buttons, alert panel with color coding (S3 only) |
 | **Session Tally** | Display-side running totals (unique WiFi BSSIDs, BLE / Flipper / AirTag / skimmer MACs) since power-on; resets on reboot, S3 only |
@@ -65,6 +66,7 @@ Build with one of the GPS-enabled environments:
 ```
 pio run -e esp32s3box-gps
 pio run -e esp32c5-gps
+pio run -e esp32c5zero-gps
 pio run -e esp32-gps
 ```
 
@@ -72,58 +74,48 @@ pio run -e esp32-gps
 
 ## Proximity alert LED (C5)
 
-Headless C5 builds (`esp32c5`, `esp32c5-gps`) drive the board's onboard
-addressable RGB LED (the WS2812B on `RGB_BUILTIN`) as a "hotter/colder" locator.
-Whenever a flagged device is seen during a BLE scan the LED blinks, and the
-blink rate tracks signal strength — the closer you get (stronger RSSI), the
-faster it blinks. The blink colors tell you *what* it found:
+Headless C5 builds with an onboard addressable RGB LED drive that LED as a "hotter/colder" locator. Whenever a flagged device is seen during a BLE scan the LED blinks, and the blink rate tracks signal strength — the closer you get (stronger RSSI), the faster it blinks. The blink colors tell you *what* it found:
 
 | Alert | Blink colors |
 |---|---|
 | Potential skimmer (suspicious BLE module — see [Skimmer Detection](#features)) | **red ⇄ white** |
 | Flipper Zero | **blue ⇄ white** |
 
-It's a single LED, so if both are nearby at once the most recently seen device
-wins. The LED turns itself off a few seconds after the device drops out of
-range.
+It's a single LED, so if both are nearby at once the most recently seen device wins. The LED turns itself off a few seconds after the device drops out of range.
 
-This is enabled by default on the C5 environments via `-DHUGINN_HAS_SKIMMER_LED=1`.
-The pin defaults to the board's `RGB_BUILTIN`. Tunables (override in
-`platformio.ini` `build_flags`):
+This is enabled by default on supported C5 environments via `-DHUGINN_HAS_SKIMMER_LED=1`.
+
+| Board/env | LED pin |
+|---|---|
+| `esp32c5`, `esp32c5-gps` | `RGB_BUILTIN` |
+| `esp32c5zero`, `esp32c5zero-gps` | GPIO 29 (`-DSKIMMER_LED_PIN=29`) |
+
+Tunables (override in `platformio.ini` `build_flags`):
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `SKIMMER_LED_PIN` | `RGB_BUILTIN` | GPIO driving the addressable LED |
+| `SKIMMER_LED_PIN` | board-specific | GPIO driving the addressable LED |
 | `SKIMMER_LED_BRIGHTNESS` | `40` | Per-channel brightness (0–255) of the blink colors |
 | `SKIMMER_LED_RSSI_NEAR` | `-45` | RSSI at/above which it blinks fastest |
 | `SKIMMER_LED_RSSI_FAR` | `-95` | RSSI at/below which it blinks slowest |
 | `SKIMMER_LED_FAST_MS` / `SKIMMER_LED_SLOW_MS` | `70` / `1000` | Blink half-period at closest / farthest range |
 | `SKIMMER_LED_HOLD_MS` | `10000` | How long to keep blinking after the last sighting (bridges the WiFi-only gaps between BLE scans, e.g. in wardrive) |
 
-> RSSI is a coarse proximity proxy — readings jump around with orientation and
-> obstacles, so treat the blink rate as "warmer/colder," not a distance meter.
+> RSSI is a coarse proximity proxy — readings jump around with orientation and obstacles, so treat the blink rate as "warmer/colder," not a distance meter.
 
-To enable it on another board with an addressable LED, add
-`-DHUGINN_HAS_SKIMMER_LED=1` (and `-DSKIMMER_LED_PIN=<gpio>` if needed) to that
-environment's `build_flags`.
+To enable it on another board with an addressable LED, add `-DHUGINN_HAS_SKIMMER_LED=1` and `-DSKIMMER_LED_PIN=<gpio>` to that environment's `build_flags`.
 
 ---
 
 ## Mode button (C5)
 
-On C5 builds the onboard **BOOT** button toggles the scan mode with a
-**long-press** (~1 s) — no host or serial command needed:
+On C5 builds the onboard **BOOT** button toggles the scan mode with a **long-press** (~1 s) — no host or serial command needed:
 
 - The device **boots into wardrive** mode.
-- **Long-press** → switches to **skimmer-only** scanning; the LED confirms with
-  **3 purple blinks**.
-- **Long-press again** → switches back to **wardrive**; the LED confirms with
-  **3 green blinks**.
+- **Long-press** → switches to **skimmer-only** scanning; the LED confirms with **3 purple blinks**.
+- **Long-press again** → switches back to **wardrive**; the LED confirms with **3 green blinks**.
 
-Skimmer-only mode runs the BLE skimmer scan continuously (WiFi off) so the
-proximity LED stays responsive; wardrive is the normal WiFi + BLE wardriving
-cycle. The serial commands (`wardrive`, `capture -skimmer`, `stop`, …) still
-work and stay in sync with the button.
+Skimmer-only mode runs the BLE skimmer scan continuously (WiFi off) so the proximity LED stays responsive; wardrive is the normal WiFi + BLE wardriving cycle. The serial commands (`wardrive`, `capture -skimmer`, `stop`, …) still work and stay in sync with the button.
 
 Enabled by default on the C5 environments via `-DHUGINN_HAS_MODE_BUTTON=1`.
 Tunables (override in `platformio.ini` `build_flags`):
@@ -133,9 +125,7 @@ Tunables (override in `platformio.ini` `build_flags`):
 | `MODE_BTN_PIN` | `BOOT_PIN` | GPIO of the toggle button (active-low, internal pull-up) |
 | `MODE_BTN_LONGPRESS_MS` | `1000` | How long to hold before the mode toggles |
 
-> The BOOT button is also a boot strapping pin — holding it **while resetting**
-> puts the chip into download mode. That only matters at reset; pressing it
-> during normal operation just toggles the scan mode.
+> The BOOT button is also a boot strapping pin — holding it **while resetting** puts the chip into download mode. That only matters at reset; pressing it during normal operation just toggles the scan mode.
 
 ---
 
@@ -143,7 +133,9 @@ Tunables (override in `platformio.ini` `build_flags`):
 
 ### Option 1 — Web flasher (easiest, no toolchain)
 
-The fastest way to flash a stock build is the browser-based installer at **<https://pierregode.github.io/HuginnESP/>**. It drives [esptool-js](https://github.com/espressif/esptool-js) **v0.6.0** directly (not esp-web-tools) and serves prebuilt merged images for all three supported boards (Waveshare S3, Waveshare C5, and Seeed XIAO C5).
+The fastest way to flash a stock build is the browser-based installer at **<https://pierregode.github.io/HuginnESP/>**. It drives [esptool-js](https://github.com/espressif/esptool-js) **v0.6.0** directly (not esp-web-tools) and serves prebuilt merged images for supported release boards.
+
+> **Note:** ESP32-C5-Zero support is available from source in the `esp32c5zero` PlatformIO environment. Web flasher support requires adding a CI/release artifact and flasher button for the Zero image.
 
 > **Why not esp-web-tools?** esp-web-tools is pinned to esptool-js v0.5.x, which lacks the ESP32-C5 native-USB (USB-Serial-JTAG) fixes added in esptool-js v0.6.0. The Seeed XIAO ESP32-C5 has **no external UART bridge**, so it can only be web-flashed over that native USB interface. HuginnESP therefore ships a lightweight flasher built on esptool-js v0.6.0 (see [docs/js/flasher.js](docs/js/flasher.js)). The page also includes a built-in **Serial Monitor** for watching the scan stream.
 
@@ -152,11 +144,29 @@ Requirements:
 - Page must be served over HTTPS (the GitHub Pages site already is).
 - USB-C cable plugged into the **USB** port of the board (the native USB / USB-Serial-JTAG port — not a separate UART port if your board has one).
 
-Steps: open the page → click the **Bind** button for your board (**Waveshare S3**, **Waveshare C5**, or **Seeed XIAO C5**) → pick the serial port → confirm install. Each button flashes a board-specific merged image; the installer refuses to flash if the connected chip doesn't match the board you picked, so choose the right button. Note the two C5 buttons are both ESP32-C5 chips but flash different images (16 MB Waveshare vs 8 MB XIAO) — pick the one matching your physical board.
+Steps: open the page → click the **Bind** button for your board → pick the serial port → confirm install. Each button flashes a board-specific merged image; the installer refuses to flash if the connected chip doesn't match the board you picked, so choose the right button.
 
 ### Option 2 — Build from source (PlatformIO)
 
 Required for development or custom builds. This is a [PlatformIO](https://platformio.org/) project using [pioarduino](https://github.com/pioarduino/platform-espressif32) — Arduino core 3.x / ESP-IDF 5.3 on the S3 env, 5.5 on the C5 env. The platform is downloaded automatically on first build.
+
+Build examples:
+
+```sh
+pio run -e esp32s3box
+pio run -e esp32c5
+pio run -e esp32c5zero
+pio run -e esp32
+```
+
+Upload and monitor the ESP32-C5-Zero:
+
+```sh
+pio run -e esp32c5zero -t upload
+pio device monitor -e esp32c5zero -b 460800
+```
+
+The ESP32-C5-Zero uses `partitions/huge_app_4MB.csv`, which provides a 3 MB app slot on its 4 MB flash part. The default 4 MB partition layout is too small for the current WiFi + BLE firmware image.
 
 > **Note:** After flashing, the USB port re-enumerates. The combined upload+monitor command handles this automatically.
 
