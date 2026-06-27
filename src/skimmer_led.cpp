@@ -30,8 +30,21 @@ static uint32_t rssiToHalfPeriod(int rssi) {
         (pos * ((long)SKIMMER_LED_SLOW_MS - (long)SKIMMER_LED_FAST_MS)) / span);
 }
 
+static inline void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
+#if HUGINN_LED_USE_NEOPIXELWRITE
+    // neopixelWrite() drives an addressable RGB LED on an explicit GPIO.
+    // This path is needed by boards such as the ESP32-C5-Zero where RGB_BUILTIN
+    // is not defined for the onboard WS2812.
+    neopixelWrite(SKIMMER_LED_PIN, r, g, b);
+#else
+    // rgbLedWrite() is kept for boards whose Arduino variant defines the
+    // built-in RGB LED and routes it through the framework helper.
+    rgbLedWrite(SKIMMER_LED_PIN, r, g, b);
+#endif
+}
+
 static inline void ledOff() {
-    rgbLedWrite(SKIMMER_LED_PIN, 0, 0, 0);
+    ledWrite(0, 0, 0);
 }
 
 // Show one phase of the alternating blink. Phase 0 is the type's signature
@@ -46,12 +59,24 @@ static void ledPhase(bool whitePhase, int type) {
     } else {
         r = b; g = 0; bl = 0;                             // red (skimmer)
     }
-    rgbLedWrite(SKIMMER_LED_PIN, r, g, bl);
+    ledWrite(r, g, bl);
 }
 
 static void skimmer_led_task(void*) {
     bool whitePhase = false;
     ledOff();
+
+#if HUGINN_LED_BOOT_TEST
+    // Quick visible sanity check at boot for board bring-up. This confirms the
+    // selected GPIO and LED write backend before any BLE alert is generated.
+    ledWrite(SKIMMER_LED_BRIGHTNESS, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    ledWrite(0, SKIMMER_LED_BRIGHTNESS, 0);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    ledWrite(0, 0, SKIMMER_LED_BRIGHTNESS);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    ledOff();
+#endif
 
     for (;;) {
         // Pending confirmation flash takes priority and plays synchronously.
@@ -60,9 +85,9 @@ static void skimmer_led_task(void*) {
             const uint8_t r = s_flashR, g = s_flashG, b = s_flashB;
             s_flashPending = 0;
             for (int i = 0; i < n; i++) {
-                rgbLedWrite(SKIMMER_LED_PIN, r, g, b);
+                ledWrite(r, g, b);
                 vTaskDelay(pdMS_TO_TICKS(150));
-                rgbLedWrite(SKIMMER_LED_PIN, 0, 0, 0);
+                ledOff();
                 vTaskDelay(pdMS_TO_TICKS(150));
             }
             whitePhase = false;
