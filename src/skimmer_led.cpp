@@ -24,21 +24,16 @@ static uint32_t rssiToHalfPeriod(int rssi) {
     if (rssi > SKIMMER_LED_RSSI_NEAR) rssi = SKIMMER_LED_RSSI_NEAR;
     if (rssi < SKIMMER_LED_RSSI_FAR)  rssi = SKIMMER_LED_RSSI_FAR;
 
-    const long span = (long)SKIMMER_LED_RSSI_NEAR - (long)SKIMMER_LED_RSSI_FAR; // > 0
-    const long pos  = (long)rssi - (long)SKIMMER_LED_RSSI_FAR;                  // 0..span
+    const long span = (long)SKIMMER_LED_RSSI_NEAR - (long)SKIMMER_LED_RSSI_FAR;
+    const long pos  = (long)rssi - (long)SKIMMER_LED_RSSI_FAR;
     return (uint32_t)((long)SKIMMER_LED_SLOW_MS -
         (pos * ((long)SKIMMER_LED_SLOW_MS - (long)SKIMMER_LED_FAST_MS)) / span);
 }
 
 static inline void ledWrite(uint8_t r, uint8_t g, uint8_t b) {
 #if HUGINN_LED_USE_NEOPIXELWRITE
-    // neopixelWrite() drives an addressable RGB LED on an explicit GPIO.
-    // This path is needed by boards such as the ESP32-C5-Zero where RGB_BUILTIN
-    // is not defined for the onboard WS2812.
     neopixelWrite(SKIMMER_LED_PIN, r, g, b);
 #else
-    // rgbLedWrite() is kept for boards whose Arduino variant defines the
-    // built-in RGB LED and routes it through the framework helper.
     rgbLedWrite(SKIMMER_LED_PIN, r, g, b);
 #endif
 }
@@ -47,17 +42,15 @@ static inline void ledOff() {
     ledWrite(0, 0, 0);
 }
 
-// Show one phase of the alternating blink. Phase 0 is the type's signature
-// color (red for skimmer, blue for Flipper); phase 1 is white for both.
 static void ledPhase(bool whitePhase, int type) {
     const uint8_t b = SKIMMER_LED_BRIGHTNESS;
     uint8_t r, g, bl;
     if (whitePhase) {
-        r = g = bl = b;                                   // white
+        r = g = bl = b;
     } else if (type == SKIMMER_LED_FLIPPER) {
-        r = 0; g = 0; bl = b;                             // blue
+        r = 0; g = 0; bl = b;
     } else {
-        r = b; g = 0; bl = 0;                             // red (skimmer)
+        r = b; g = 0; bl = 0;
     }
     ledWrite(r, g, bl);
 }
@@ -67,8 +60,6 @@ static void skimmer_led_task(void*) {
     ledOff();
 
 #if HUGINN_LED_BOOT_TEST
-    // Quick visible sanity check at boot for board bring-up. This confirms the
-    // selected GPIO and LED write backend before any BLE alert is generated.
     ledWrite(SKIMMER_LED_BRIGHTNESS, 0, 0);
     vTaskDelay(pdMS_TO_TICKS(150));
     ledWrite(0, SKIMMER_LED_BRIGHTNESS, 0);
@@ -79,7 +70,6 @@ static void skimmer_led_task(void*) {
 #endif
 
     for (;;) {
-        // Pending confirmation flash takes priority and plays synchronously.
         if (s_flashPending > 0) {
             const int     n = s_flashPending;
             const uint8_t r = s_flashR, g = s_flashG, b = s_flashB;
@@ -98,13 +88,10 @@ static void skimmer_led_task(void*) {
         const uint32_t age = now - (uint32_t)s_lastSeenMs;
 
         if (s_lastSeenMs != 0 && age <= SKIMMER_LED_HOLD_MS) {
-            // A flagged device is (recently) in range — alternate the two
-            // colors at the proximity rate.
             whitePhase = !whitePhase;
             ledPhase(whitePhase, (int)s_lastType);
             vTaskDelay(pdMS_TO_TICKS(rssiToHalfPeriod((int)s_lastRssi)));
         } else {
-            // Nothing nearby — make sure the LED is off and idle-poll.
             ledOff();
             whitePhase = false;
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -115,8 +102,13 @@ static void skimmer_led_task(void*) {
 void skimmer_led_init() {
     if (s_started) return;
     s_started = true;
+
+    // Waveshare's ESP32-C5-Zero reference example explicitly configures the
+    // WS2812 data pin as an output before the first neopixelWrite(). Without
+    // this, the call can succeed silently while the LED remains dark.
+    pinMode(SKIMMER_LED_PIN, OUTPUT);
     ledOff();
-    // Pinned to core 0 so it coexists with the scan cycle on single-core C5.
+
     xTaskCreatePinnedToCore(skimmer_led_task, "skimmer_led",
                             SKIMMER_LED_TASK_STACK, NULL, 1, NULL, 0);
 }
